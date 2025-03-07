@@ -55,13 +55,16 @@ def home(request):
     return JsonResponse({"message": "Welcome to Web2Print API!"})
 
 
+import fitz  # PyMuPDF for reading PDFs
+import os
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from .models import PrintOrder
-from .serializers import PrintOrderSerializer
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])  # ✅ Require authentication
@@ -69,27 +72,45 @@ from .serializers import PrintOrderSerializer
 def upload_file(request):
     print("✅ Received Upload Request")
 
+    # ✅ Check if file is in request
     if 'file' not in request.FILES:
         print("❌ No file found in request")
         return Response({'error': 'No file uploaded'}, status=status.HTTP_400_BAD_REQUEST)
 
     file = request.FILES['file']
     page_size = request.data.get('page_size', 'A4')
-    num_copies = request.data.get('num_copies', '1')
+    num_copies = int(request.data.get('num_copies', 1))
     print_type = request.data.get('print_type', 'black_white')
 
     user = request.user  # ✅ Get authenticated user
     print(f"👤 User: {user}")
 
+    # ✅ Save File First
+    file_path = f"uploads/{file.name}"
+    saved_path = default_storage.save(file_path, ContentFile(file.read()))
+
+    # ✅ Extract Page Count if PDF
+    page_count = 1  # Default if not PDF
+    if file.name.lower().endswith('.pdf'):
+        try:
+            full_path = default_storage.path(saved_path)  # Get full path
+            with fitz.open(full_path) as pdf:
+                page_count = pdf.page_count
+        except Exception as e:
+            print("❌ Error reading PDF:", str(e))
+            return Response({'error': f'Failed to process PDF: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
     try:
+        # ✅ Save Print Order
         print_order = PrintOrder.objects.create(
             user=user,
             file=file,
             file_name=file.name,
-            file_path=f"uploads/{file.name}",
+            file_path=saved_path,  # ✅ Save correct file path
             page_size=page_size,
             num_copies=num_copies,
-            print_type=print_type
+            print_type=print_type,
+            num_pages=page_count  # ✅ Save page count
         )
         print("✅ Print Order Created:", print_order)
 
@@ -104,6 +125,7 @@ def upload_file(request):
         'page_size': print_order.page_size,
         'num_copies': print_order.num_copies,
         'print_type': print_order.print_type,
+        'num_pages': print_order.num_pages,  # ✅ Return page count
     }, status=status.HTTP_201_CREATED)
 
 
