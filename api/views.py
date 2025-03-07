@@ -8,6 +8,12 @@ from django.contrib.auth import authenticate
 from rest_framework.decorators import parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 
+
+
+from .serializers import StoreSerializer  # ✅ Import StoreSerializer
+
+
+
 # Create your views here.
 
 
@@ -54,7 +60,6 @@ from django.http import JsonResponse
 def home(request):
     return JsonResponse({"message": "Welcome to Web2Print API!"})
 
-
 import fitz  # PyMuPDF for reading PDFs
 import os
 from django.core.files.storage import default_storage
@@ -64,7 +69,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-from .models import PrintOrder
+from .models import PrintOrder, Store  # ✅ Import Store Model
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])  # ✅ Require authentication
@@ -81,9 +86,19 @@ def upload_file(request):
     page_size = request.data.get('page_size', 'A4')
     num_copies = int(request.data.get('num_copies', 1))
     print_type = request.data.get('print_type', 'black_white')
+    store_id = request.data.get('store_id')  # ✅ Store Selection
 
     user = request.user  # ✅ Get authenticated user
     print(f"👤 User: {user}")
+
+    # ✅ Validate Store Selection
+    if not store_id:
+        return Response({'error': 'Please select a store'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        store = Store.objects.get(id=store_id)
+    except Store.DoesNotExist:
+        return Response({'error': 'Selected store does not exist'}, status=status.HTTP_400_BAD_REQUEST)
 
     # ✅ Save File First
     file_path = f"uploads/{file.name}"
@@ -101,9 +116,10 @@ def upload_file(request):
             return Response({'error': f'Failed to process PDF: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        # ✅ Save Print Order
+        # ✅ Save Print Order with Selected Store
         print_order = PrintOrder.objects.create(
             user=user,
+            store=store,  # ✅ Assign store to order
             file=file,
             file_name=file.name,
             file_path=saved_path,  # ✅ Save correct file path
@@ -112,7 +128,7 @@ def upload_file(request):
             print_type=print_type,
             num_pages=page_count  # ✅ Save page count
         )
-        print("✅ Print Order Created:", print_order)
+        print(f"✅ Print Order Created for Store: {store.name}", print_order)
 
     except Exception as e:
         print("❌ Error saving order:", str(e))
@@ -126,6 +142,7 @@ def upload_file(request):
         'num_copies': print_order.num_copies,
         'print_type': print_order.print_type,
         'num_pages': print_order.num_pages,  # ✅ Return page count
+        'store': print_order.store.name,  # ✅ Return store name
     }, status=status.HTTP_201_CREATED)
 
 
@@ -139,4 +156,13 @@ from .serializers import PrintOrderSerializer
 def get_orders(request):
     orders = PrintOrder.objects.all().order_by('-id')  # ✅ Fetch all print orders (latest first)
     serializer = PrintOrderSerializer(orders, many=True)  # ✅ Convert to JSON
+    return Response(serializer.data)
+
+
+from .models import Store
+
+@api_view(['GET'])
+def get_stores(request):
+    stores = Store.objects.all()
+    serializer = StoreSerializer(stores, many=True)
     return Response(serializer.data)
